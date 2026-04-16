@@ -13,28 +13,47 @@ function parseId(raw) {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-// Helper: invalidate the task list cache after any write
+// Helper: invalidate all paginated task list cache entries after any write.
+// Keys follow the pattern tasks:all:<limit>:<offset> — we scan and delete them all.
 async function invalidateCache() {
   try {
-    await redis.del(CACHE_KEY);
+    const keys = await redis.keys(`${CACHE_KEY}:*`);
+    if (keys.length > 0) {
+      await redis.del(keys);
+    }
   } catch (_) {
-    // Cache miss on invalidation is non-fatal
+    // Cache invalidation failure is non-fatal
   }
 }
 
-// GET /api/tasks — list all tasks (cached)
+// GET /api/tasks — list tasks with pagination (?limit=20&offset=0)
 router.get('/', async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+  const offset = parseInt(req.query.offset, 10) || 0;
+
+  if (offset < 0) {
+    return res.status(400).json({ error: '"offset" must be >= 0' });
+  }
+
+  // Cache key includes pagination params so each page is cached independently
+  const cacheKey = `${CACHE_KEY}:${limit}:${offset}`;
+
   try {
-    const cached = await redis.get(CACHE_KEY);
+    const cached = await redis.get(cacheKey);
     if (cached) {
-      return res.json({ data: JSON.parse(cached) });
+      return res.json(JSON.parse(cached));
     }
 
     const { rows } = await pool.query(
-      'SELECT * FROM tasks ORDER BY created_at DESC'
+      'SELECT * FROM tasks ORDER BY created_at DESC LIMIT $1 OFFSET $2',
+      [limit, offset]
     );
-    await redis.setEx(CACHE_KEY, CACHE_TTL, JSON.stringify(rows));
-    return res.json({ data: rows });
+    const { rows: countRows } = await pool.query('SELECT COUNT(*) FROM tasks');
+    const total = parseInt(countRows[0].count, 10);
+
+    const payload = { data: rows, total, limit, offset };
+    await redis.setEx(cacheKey, CACHE_TTL, JSON.stringify(payload));
+    return res.json(payload);
   } catch (err) {
     console.error('[GET /tasks]', err);
     return res.status(500).json({ error: 'Failed to fetch tasks' });

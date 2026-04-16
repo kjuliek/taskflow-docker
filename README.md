@@ -47,7 +47,7 @@ Expected response:
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check — returns DB + Redis status |
-| `GET` | `/api/tasks` | List all tasks (Redis-cached, TTL 60 s) |
+| `GET` | `/api/tasks?limit=20&offset=0` | List tasks — paginated, Redis-cached per page (TTL 60 s) |
 | `GET` | `/api/tasks/:id` | Get a single task |
 | `POST` | `/api/tasks` | Create a task |
 | `PUT` | `/api/tasks/:id` | Update a task |
