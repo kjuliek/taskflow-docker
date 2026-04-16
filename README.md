@@ -33,6 +33,11 @@ docker compose up --build -d
 curl http://localhost/health
 ```
 
+Expected response:
+```json
+{"status":"healthy","timestamp":"...","database":"connected","cache":"connected"}
+```
+
 > Any developer can clone the repo, run `docker compose up`, and have the full stack running in under 30 seconds — no local Node.js, PostgreSQL, or Redis installation required.
 
 ---
@@ -78,16 +83,88 @@ HTTP `200` when healthy, `503` when any dependency is down.
 
 ---
 
+## Docker Compose
+
+### Services
+
+| Service | Image | Role | Port |
+|---------|-------|------|------|
+| `api` | built from `Dockerfile` | Node.js REST API | 3000 (internal) |
+| `db` | `postgres:16-alpine` | Persistent task storage | 5432 (internal) |
+| `redis` | `redis:7-alpine` | Task list cache (TTL 60 s) | 6379 (internal) |
+| `nginx` | `nginx:alpine` | Reverse proxy, single public entry point | **80 (public)** |
+
+Only Nginx is exposed to the host. All other services communicate on Docker's internal network.
+
+### Startup dependency chain
+
+```
+db (healthy) ──┐
+               ├──► api (started) ──► nginx
+redis (started)┘
+```
+
+The API container will not start until PostgreSQL passes its healthcheck (`pg_isready`). This prevents connection errors at boot when the database is still initialising.
+
+### PostgreSQL healthcheck
+
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+```
+
+`start_period: 30s` gives PostgreSQL time to restore data from its volume on first boot before the healthcheck starts counting retries.
+
+### Redis memory policy
+
+```yaml
+command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+```
+
+Redis is capped at 128 MB. When full, it evicts the least-recently-used keys (`allkeys-lru`). This makes it behave as a bounded cache — it will never crash the host due to unbounded memory growth.
+
+### Redis caching strategy
+
+- `GET /api/tasks` stores the result in Redis with a 60-second TTL under the key `tasks:all`.
+- Any write operation (`POST`, `PUT`, `DELETE`) immediately invalidates that key.
+- Subsequent reads hit the database and repopulate the cache.
+
+### Nginx reverse proxy
+
+Nginx is the sole public entry point on port 80. It proxies all traffic to the API and strips internal routing from public view.
+
+```nginx
+upstream api_backend {
+    server api:3000;        # Docker internal hostname
+}
+```
+
+The `/health` location has `access_log off` to avoid polluting logs with automated healthcheck probes.
+
+### Data persistence
+
+PostgreSQL data is stored in a named Docker volume (`pgdata`). It survives `docker compose down` and is only removed with:
+
+```bash
+docker compose down -v    # ⚠ deletes all data
+```
+
+---
+
 ## Environment variables
 
-See [.env.example](.env.example) for the full list.
+Copy `.env.example` to `.env` before starting the stack. Docker Compose builds the full connection URLs automatically.
 
 | Variable | Example | Description |
 |----------|---------|-------------|
 | `POSTGRES_USER` | `taskuser` | PostgreSQL username |
 | `POSTGRES_PASSWORD` | `taskpassword` | PostgreSQL password |
 | `POSTGRES_DB` | `taskdb` | PostgreSQL database name |
-| `DATABASE_URL` | *(built by Compose)* | Full connection string — auto-set by Docker Compose |
+| `DATABASE_URL` | *(built by Compose)* | Full Postgres connection string — auto-set by Docker Compose |
 | `REDIS_URL` | *(built by Compose)* | Redis connection string — auto-set by Docker Compose |
 | `NODE_ENV` | `production` | Runtime environment |
 
@@ -107,6 +184,8 @@ docker build -t taskflow-api .
 docker images taskflow-api
 ```
 
+Result: **~49 MB content size** (well under the 100 MB target).
+
 The multi-stage build keeps the final image lean:
 
 | What stays out | Why |
@@ -116,12 +195,17 @@ The multi-stage build keeps the final image lean:
 | Build toolchain | builder stage is discarded entirely |
 | Git history / docs | excluded via `.dockerignore` |
 
-### Image layers
+### Image stages
 
 ```
-Stage 1 — builder   node:20-alpine + all deps + npm prune  (discarded)
-Stage 2 — production  node:20-alpine + prod deps + src only  ← final image
+Stage 1 — builder     node:20-alpine + all deps + npm prune  ← discarded after build
+Stage 2 — production  node:20-alpine + prod deps + src only  ← final image pushed to GHCR
 ```
+
+### Security
+
+- Runs as a dedicated non-root user (`appuser:appgroup`) — no process inside the container has root privileges.
+- `HEALTHCHECK` uses `wget` (available in Alpine) to probe `/health` every 30 seconds.
 
 ---
 
@@ -129,10 +213,13 @@ Stage 2 — production  node:20-alpine + prod deps + src only  ← final image
 
 ```bash
 npm install
-# Start a local PostgreSQL and Redis, then:
+# Requires a local PostgreSQL and Redis instance, then:
 cp .env.example .env
+# Add POSTGRES_HOST, REDIS_HOST etc. to .env for local overrides
 npm run dev
 ```
+
+The `db.js` connection logic accepts either a `DATABASE_URL` / `REDIS_URL` (used by Docker Compose) or individual `POSTGRES_*` / `REDIS_*` variables (used for local development).
 
 ## Tests
 
@@ -155,19 +242,19 @@ taskflow-docker/
 ├── .github/workflows/
 │   └── ci.yml              # GitHub Actions pipeline
 ├── src/
-│   ├── server.js           # Express entrypoint + /health
+│   ├── server.js           # Express entrypoint + /health endpoint
 │   ├── routes/
-│   │   └── tasks.js        # CRUD routes with Redis cache
+│   │   └── tasks.js        # CRUD routes with Redis cache invalidation
 │   └── db.js               # pg pool + Redis client + schema init
 ├── tests/
-│   └── tasks.test.js       # Unit tests
+│   └── tasks.test.js       # Unit tests (node:test, no extra deps)
 ├── nginx/
-│   └── default.conf        # Nginx reverse proxy config
-├── Dockerfile              # Container image definition
-├── .dockerignore           # Build context exclusions
-├── docker-compose.yml      # Development stack (4 services)
-├── docker-compose.prod.yml # Production overrides
-├── .env.example            # Environment variable template
+│   └── default.conf        # Nginx reverse proxy — upstream api_backend
+├── Dockerfile              # Multi-stage build (builder + production)
+├── .dockerignore           # Excludes node_modules, tests, docs, .env
+├── docker-compose.yml      # 4-service stack with healthchecks
+├── docker-compose.prod.yml # Production overrides (resource limits, restart: always)
+├── .env.example            # Environment variable template (3 vars to set)
 ├── package.json
 └── README.md
 ```
