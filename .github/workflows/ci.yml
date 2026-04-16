@@ -98,7 +98,7 @@ jobs:
       # skip-dirs excludes Node.js's bundled npm tool (/usr/local/lib/node_modules/npm/)
       # which contains cross-spawn and glob CVEs we cannot patch (not our app code).
       - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.30.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           format: "table"
