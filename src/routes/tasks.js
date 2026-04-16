@@ -27,14 +27,14 @@ router.get('/', async (req, res) => {
   try {
     const cached = await redis.get(CACHE_KEY);
     if (cached) {
-      return res.json({ source: 'cache', data: JSON.parse(cached) });
+      return res.json({ data: JSON.parse(cached) });
     }
 
     const { rows } = await pool.query(
       'SELECT * FROM tasks ORDER BY created_at DESC'
     );
     await redis.setEx(CACHE_KEY, CACHE_TTL, JSON.stringify(rows));
-    return res.json({ source: 'db', data: rows });
+    return res.json({ data: rows });
   } catch (err) {
     console.error('[GET /tasks]', err);
     return res.status(500).json({ error: 'Failed to fetch tasks' });
