@@ -5,6 +5,14 @@ const router = Router();
 const CACHE_KEY = 'tasks:all';
 const CACHE_TTL = 60; // seconds
 
+const VALID_STATUSES = ['pending', 'in_progress', 'done'];
+
+// Returns a positive integer or null — used to reject non-numeric :id params
+function parseId(raw) {
+  const n = parseInt(raw, 10);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 // Helper: invalidate the task list cache after any write
 async function invalidateCache() {
   try {
@@ -35,7 +43,9 @@ router.get('/', async (req, res) => {
 
 // GET /api/tasks/:id — get one task
 router.get('/:id', async (req, res) => {
-  const { id } = req.params;
+  const id = parseId(req.params.id);
+  if (!id) return res.status(400).json({ error: '"id" must be a positive integer' });
+
   try {
     const { rows } = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
     if (rows.length === 0) {
@@ -54,12 +64,16 @@ router.post('/', async (req, res) => {
   if (!title) {
     return res.status(400).json({ error: '"title" is required' });
   }
+  const resolvedStatus = status || 'pending';
+  if (!VALID_STATUSES.includes(resolvedStatus)) {
+    return res.status(400).json({ error: `"status" must be one of: ${VALID_STATUSES.join(', ')}` });
+  }
   try {
     const { rows } = await pool.query(
       `INSERT INTO tasks (title, description, status)
        VALUES ($1, $2, $3)
        RETURNING *`,
-      [title, description || null, status || 'pending']
+      [title, description || null, resolvedStatus]
     );
     await invalidateCache();
     return res.status(201).json({ data: rows[0] });
@@ -71,8 +85,13 @@ router.post('/', async (req, res) => {
 
 // PUT /api/tasks/:id — update a task
 router.put('/:id', async (req, res) => {
-  const { id } = req.params;
+  const id = parseId(req.params.id);
+  if (!id) return res.status(400).json({ error: '"id" must be a positive integer' });
+
   const { title, description, status } = req.body;
+  if (status !== undefined && !VALID_STATUSES.includes(status)) {
+    return res.status(400).json({ error: `"status" must be one of: ${VALID_STATUSES.join(', ')}` });
+  }
   try {
     const { rows } = await pool.query(
       `UPDATE tasks
@@ -97,7 +116,9 @@ router.put('/:id', async (req, res) => {
 
 // DELETE /api/tasks/:id — delete a task
 router.delete('/:id', async (req, res) => {
-  const { id } = req.params;
+  const id = parseId(req.params.id);
+  if (!id) return res.status(400).json({ error: '"id" must be a positive integer' });
+
   try {
     const { rowCount } = await pool.query(
       'DELETE FROM tasks WHERE id = $1',
