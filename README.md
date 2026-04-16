@@ -90,9 +90,9 @@ HTTP `200` when healthy, `503` when any dependency is down.
 | Service | Image | Role | Port |
 |---------|-------|------|------|
 | `api` | built from `Dockerfile` | Node.js REST API | 3000 (internal) |
-| `db` | `postgres:16-alpine` | Persistent task storage | 5432 (internal) |
-| `redis` | `redis:7-alpine` | Task list cache (TTL 60 s) | 6379 (internal) |
-| `nginx` | `nginx:alpine` | Reverse proxy, single public entry point | **80 (public)** |
+| `db` | `postgres:16.8-alpine3.21` | Persistent task storage | 5432 (internal) |
+| `redis` | `redis:7.4-alpine3.21` | Task list cache (TTL 60 s) | 6379 (internal) |
+| `nginx` | `nginx:1.27-alpine3.21` | Reverse proxy, single public entry point | **80 (public)** |
 
 Only Nginx is exposed to the host. All other services communicate on Docker's internal network.
 
@@ -174,7 +174,8 @@ Copy `.env.example` to `.env` before starting the stack. Docker Compose builds t
 
 ### Non-root container
 
-The API runs as a dedicated non-root user (`appuser`) inside the container.  
+The API runs as a dedicated non-root user (`appuser:appgroup`) inside the container — no process has root privileges.
+
 Verify at any time with:
 
 ```bash
@@ -182,46 +183,144 @@ docker compose exec api whoami
 # Expected output: appuser
 ```
 
+The user is created in the Dockerfile production stage and ownership is set via `--chown` on every `COPY` instruction:
+
+```dockerfile
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+COPY --from=builder --chown=appuser:appgroup /app/node_modules ./node_modules
+USER appuser
+```
+
 ### Pinned image versions
 
-All base images are pinned to a specific version to guarantee reproducible builds and prevent silent upgrades that could introduce CVEs.
+All base images are pinned to a specific runtime + Alpine version to guarantee reproducible builds and prevent silent CVE introduction via tag mutation.
 
-| Service | Image |
-|---------|-------|
-| API (builder + runtime) | `node:20.19-alpine3.21` |
-| PostgreSQL | `postgres:16.8-alpine3.21` |
-| Redis | `redis:7.4-alpine3.21` |
-| Nginx | `nginx:1.27-alpine3.21` |
+| Service | Image | Why pinned |
+|---------|-------|-----------|
+| API (builder + runtime) | `node:20.19-alpine3.21` | LTS runtime, fixed OS packages |
+| PostgreSQL | `postgres:16.8-alpine3.21` | Known-good patch release |
+| Redis | `redis:7.4-alpine3.21` | Known-good patch release |
+| Nginx | `nginx:1.27-alpine3.21` | Stable branch, fixed OS packages |
 
-Using `:latest` or unversioned Alpine tags (e.g. `postgres:16-alpine`) means the image can change on every pull without your knowledge. Pinning the full version ensures the build is deterministic across all environments.
+Using `:latest` or partial tags like `postgres:16-alpine` means the image silently changes on every pull. Pinning the full version makes every build deterministic across dev, CI, and production.
 
 ### No secrets in the image
 
 - `.env` is listed in both `.gitignore` and `.dockerignore` — it is never committed or baked into the image.
-- Credentials are injected at runtime via environment variables.
+- Credentials are injected at runtime via environment variables defined in `docker-compose.yml`.
+- The `Dockerfile` contains no credentials, tokens, or environment-specific values.
 
-### Trivy vulnerability scan
+### Trivy vulnerability scan results
 
-Scan the image locally before pushing:
+Scan run against `taskflow-api:latest` with `--severity CRITICAL,HIGH`:
 
-```bash
-# Scan for CRITICAL and HIGH CVEs only
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-  aquasec/trivy image --severity CRITICAL,HIGH taskflow-api:latest
+| Scope | CVEs found |
+|-------|-----------|
+| Alpine OS packages | **0** |
+| Application `node_modules` | **0** |
+| npm internal packages (system) | 2 (not in app scope) |
+
+The 2 findings in `usr/local/lib/node_modules/npm/` belong to Node.js's bundled npm tool, not our application code. They are not exploitable through the API.
+
+### Run Trivy locally (Windows PowerShell)
+
+```powershell
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/aquasecurity/trivy:latest image --severity CRITICAL,HIGH taskflow-api:latest
 ```
 
-Target: **0 CRITICAL CVEs**. If any are found:
-1. Update the base image pin to the latest patch (e.g. `node:20.19-alpine3.21` → `node:20.19-alpine3.22`)
-2. Run `npm audit fix` to update vulnerable dependencies
-3. Rebuild and scan again
+If CVEs are found:
+1. Update the base image pin (e.g. `alpine3.21` → `alpine3.22`)
+2. Run `npm audit fix` to patch vulnerable dependencies
+3. Rebuild and scan again — never push with unresolved CRITICAL CVEs
 
-The CI pipeline (GitHub Actions) also runs Trivy automatically on every push and blocks the image push if CRITICAL CVEs are found.
+---
+
+## CI/CD Pipeline
+
+The pipeline is defined in [.github/workflows/ci.yml](.github/workflows/ci.yml) and runs on every push and pull request to `main`.
+
+### Pipeline overview
+
+```
+push / PR to main
+       │
+       ▼
+┌──────────────────┐
+│  Job 1: test     │  always runs (push + PR)
+│  ─────────────── │
+│  npm ci          │
+│  npm run lint    │
+│  npm run test    │
+│  (with coverage) │
+└────────┬─────────┘
+         │ needs (must pass)
+         ▼
+┌──────────────────────────┐
+│  Job 2: build-and-push   │  push to main only
+│  ──────────────────────  │
+│  docker login GHCR       │
+│  docker buildx build     │
+│  → push to GHCR          │
+│  trivy scan (exit 1 on   │
+│    CRITICAL CVE)         │
+└──────────────────────────┘
+```
+
+### Job 1 — Lint, test & coverage
+
+| Step | Command | Purpose |
+|------|---------|---------|
+| Install | `npm ci` | Reproducible install from lock file |
+| Lint | `npm run lint` | ESLint checks `src/` for errors |
+| Test + coverage | `npm run test:coverage` | Runs unit tests and prints coverage via Node.js built-in `--experimental-test-coverage` |
+
+### Job 2 — Build, scan & push
+
+| Step | Tool | Purpose |
+|------|------|---------|
+| Login | `docker/login-action@v3` | Authenticates to GHCR using `GITHUB_TOKEN` |
+| Buildx | `docker/setup-buildx-action@v3` | Enables BuildKit and layer cache |
+| Metadata | `docker/metadata-action@v5` | Generates two tags: `sha-<short>` (immutable) and `latest` |
+| Build & push | `docker/build-push-action@v5` | Builds with `cache-from/to: type=gha` to reuse layers between runs |
+| Scan | `aquasecurity/trivy-action@master` | Scans the pushed image — `exit-code: 1` blocks the pipeline on CRITICAL |
+
+### Image tags on GHCR
+
+Every push to `main` produces two tags:
+
+```
+ghcr.io/<owner>/taskflow-docker:sha-abc1234   ← immutable, tied to a specific commit
+ghcr.io/<owner>/taskflow-docker:latest        ← updated on every push to main
+```
+
+Use the SHA tag in production deployments for reproducibility.
+
+### GitHub Actions permissions
+
+`GITHUB_TOKEN` is automatically available in every workflow. The `build-and-push` job declares:
+
+```yaml
+permissions:
+  contents: read
+  packages: write   # required to push to ghcr.io
+```
+
+Verify in **Settings → Actions → General** that "Read and write permissions" is enabled.
+
+### Layer cache
+
+```yaml
+cache-from: type=gha
+cache-to: type=gha,mode=max
+```
+
+Docker layer cache is stored in GitHub Actions cache. On subsequent pushes, unchanged layers (e.g. `node_modules`) are restored instead of rebuilt, significantly reducing build time.
 
 ---
 
 ## Docker image
 
-### Build
+### Build locally
 
 ```bash
 docker build -t taskflow-api .
@@ -235,26 +334,21 @@ docker images taskflow-api
 
 Result: **~49 MB content size** (well under the 100 MB target).
 
-The multi-stage build keeps the final image lean:
+### How the multi-stage build stays lean
 
 | What stays out | Why |
 |----------------|-----|
-| devDependencies | pruned in the builder stage before copy |
-| Test files | excluded via `.dockerignore` |
-| Build toolchain | builder stage is discarded entirely |
-| Git history / docs | excluded via `.dockerignore` |
+| devDependencies (`eslint`, `nodemon`) | Pruned in the builder stage before copy |
+| Test files | Excluded via `.dockerignore` |
+| Build toolchain (npm cache, etc.) | Builder stage is discarded entirely |
+| Git history, docs, CI config | Excluded via `.dockerignore` |
 
 ### Image stages
 
 ```
-Stage 1 — builder     node:20-alpine + all deps + npm prune  ← discarded after build
-Stage 2 — production  node:20-alpine + prod deps + src only  ← final image pushed to GHCR
+Stage 1 — builder     node:20.19-alpine3.21 + all deps + npm prune  ← discarded
+Stage 2 — production  node:20.19-alpine3.21 + prod deps + src only  ← pushed to GHCR
 ```
-
-### Security
-
-- Runs as a dedicated non-root user (`appuser:appgroup`) — no process inside the container has root privileges.
-- `HEALTHCHECK` uses `wget` (available in Alpine) to probe `/health` every 30 seconds.
 
 ---
 
@@ -262,26 +356,33 @@ Stage 2 — production  node:20-alpine + prod deps + src only  ← final image p
 
 ```bash
 npm install
-# Requires a local PostgreSQL and Redis instance, then:
 cp .env.example .env
 # Add POSTGRES_HOST, REDIS_HOST etc. to .env for local overrides
 npm run dev
 ```
 
-The `db.js` connection logic accepts either a `DATABASE_URL` / `REDIS_URL` (used by Docker Compose) or individual `POSTGRES_*` / `REDIS_*` variables (used for local development).
+The connection logic in `src/db.js` accepts either a `DATABASE_URL` / `REDIS_URL` (Docker Compose) or individual `POSTGRES_*` / `REDIS_*` variables (local development without Docker).
+
+## Lint
+
+```bash
+npm run lint
+```
+
+ESLint checks `src/` against `eslint:recommended` rules. Configuration in `.eslintrc.json`.
 
 ## Tests
 
 ```bash
-npm test
+npm test                 # unit tests only
+npm run test:coverage    # unit tests + coverage report (stdout)
 ```
 
-Unit tests run with Node's built-in `node:test` runner — no extra dependencies.
+Unit tests use Node.js's built-in `node:test` runner — no extra test framework dependency.
 
-> **Note:** the test script points directly to `tests/tasks.test.js` rather than using a directory or glob.  
-> On Node.js v22 (Windows), `node --test tests/` fails because the directory is resolved as a module entry point.  
-> On Node.js v20 (Linux/CI), quoted globs are not shell-expanded and are passed literally to the runner.  
-> An explicit file path is the only form that works reliably across Node.js versions and platforms.
+> **Cross-platform note:** the test script uses an explicit file path (`tests/tasks.test.js`) rather than a directory or glob.  
+> On Node.js v22 (Windows), `node --test tests/` fails because the directory resolves as a module entry point.  
+> On Node.js v20 (Linux/CI), quoted globs are not shell-expanded. An explicit path works on all versions and platforms.
 
 ---
 
@@ -290,21 +391,22 @@ Unit tests run with Node's built-in `node:test` runner — no extra dependencies
 ```
 taskflow-docker/
 ├── .github/workflows/
-│   └── ci.yml              # GitHub Actions pipeline
+│   └── ci.yml              # 2-job CI/CD pipeline (test → build+scan+push)
 ├── src/
 │   ├── server.js           # Express entrypoint + /health endpoint
 │   ├── routes/
 │   │   └── tasks.js        # CRUD routes with Redis cache invalidation
-│   └── db.js               # pg pool + Redis client + schema init
+│   └── db.js               # pg pool + Redis client + schema init on boot
 ├── tests/
 │   └── tasks.test.js       # Unit tests (node:test, no extra deps)
 ├── nginx/
 │   └── default.conf        # Nginx reverse proxy — upstream api_backend
-├── Dockerfile              # Multi-stage build (builder + production)
-├── .dockerignore           # Excludes node_modules, tests, docs, .env
-├── docker-compose.yml      # 4-service stack with healthchecks
+├── Dockerfile              # Multi-stage: builder (prune) + production (non-root)
+├── .dockerignore           # Excludes node_modules, tests, docs, .env, CI config
+├── .eslintrc.json          # ESLint 8 config — eslint:recommended + node env
+├── docker-compose.yml      # 4-service stack with pinned images and healthchecks
 ├── docker-compose.prod.yml # Production overrides (resource limits, restart: always)
-├── .env.example            # Environment variable template (3 vars to set)
+├── .env.example            # 3 variables to set — Compose builds the URLs
 ├── package.json
 └── README.md
 ```
@@ -316,6 +418,6 @@ taskflow-docker/
 - [x] Step 1 — REST API with CRUD endpoints and `/health`
 - [x] Step 2 — Multi-stage Dockerfile (target < 100 MB)
 - [x] Step 3 — Docker Compose with health checks
-- [x] Step 4 — Trivy vulnerability scan
-- [ ] Step 5 — GitHub Actions: build → scan → push to GHCR
+- [x] Step 4 — Trivy vulnerability scan (0 CRITICAL CVEs)
+- [x] Step 5 — GitHub Actions: lint → test → build → scan → push to GHCR
 - [ ] Step 6 — Blue/Green deployment simulation

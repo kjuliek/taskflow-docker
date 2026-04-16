@@ -1,10 +1,4 @@
-# CI/CD Pipeline — taskflow-docker
-# Full pipeline (build, scan, push to GHCR, blue/green deploy)
-# will be implemented in step 5.
-#
-# This skeleton runs unit tests on every push and pull request.
-
-name: CI
+name: CI/CD Pipeline
 
 on:
   push:
@@ -12,9 +6,17 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
+  # ==========================================================================
+  # Job 1 — Lint + Tests + Coverage
+  # Runs on every push and pull request.
+  # ==========================================================================
   test:
-    name: Unit tests
+    name: Lint, test & coverage
     runs-on: ubuntu-latest
 
     steps:
@@ -30,5 +32,73 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests
-        run: npm test
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests with coverage
+        # --experimental-test-coverage is built into Node.js 20 — no extra dep needed.
+        # Coverage output is printed to stdout and captured in the CI log.
+        run: npm run test:coverage
+
+  # ==========================================================================
+  # Job 2 — Build + Trivy scan + Push to GHCR
+  # Only runs on push to main (not on pull requests).
+  # Requires Job 1 to pass first (needs: test).
+  # ==========================================================================
+  build-and-push:
+    name: Build, scan & push
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: read
+      packages: write   # required to push to GHCR
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Authenticate to GHCR using the automatic GITHUB_TOKEN
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Enable BuildKit and multi-platform build support
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Generate image tags:
+      #   - ghcr.io/owner/repo:sha-<short-sha>  (immutable, traceable)
+      #   - ghcr.io/owner/repo:latest            (mutable, used by Compose)
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha
+            type=raw,value=latest
+
+      # Build and push with GitHub Actions cache to speed up subsequent builds
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Scan the pushed image — pipeline fails if any CRITICAL CVE is found
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"

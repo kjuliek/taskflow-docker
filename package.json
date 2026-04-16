@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "node --test tests/tasks.test.js"
+    "lint": "eslint src/",
+    "test": "node --test tests/tasks.test.js",
+    "test:coverage": "node --experimental-test-coverage --test tests/tasks.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -16,6 +18,7 @@
     "redis": "^4.6.14"
   },
   "devDependencies": {
+    "eslint": "^8.57.1",
     "nodemon": "^3.1.0"
   },
   "engines": {
