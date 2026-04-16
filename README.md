@@ -220,7 +220,7 @@ Scan run against `ghcr.io/kjuliek/taskflow-docker:latest` in CI with `--severity
 | Application `node_modules` (`/app/node_modules/`) | 0 | **0** | ✅ passes |
 | npm internal packages (`/usr/local/lib/node_modules/npm/`) | — | excluded via `skip-dirs` | ✅ passes |
 
-Alpine 3.23 includes patched versions of `libcrypto3`/`libssl3` (≥ 3.5.5-r0), `musl` (≥ 1.2.5-r12), and `zlib` (≥ 1.3.2-r0) that resolve all CRITICAL and HIGH CVEs present in alpine 3.22.
+The Dockerfile runs `apk upgrade --no-cache` in the production stage to pull the latest security patches from the Alpine repos at build time. Node.js base images are built at a fixed point in time — their OS packages become stale as CVEs are patched upstream. `apk upgrade` bridges this gap without waiting for the base image maintainer to publish a new tag.
 
 The npm internal packages at `/usr/local/lib/node_modules/npm/` are excluded via `skip-dirs` because they belong to Node.js's bundled npm CLI — not our application code — and are not reachable at runtime.
 
@@ -231,7 +231,8 @@ The npm internal packages at `/usr/local/lib/node_modules/npm/` are excluded via
 | `node:20-alpine` (unpinned) | 3.23.x | 0 | 0 | ✅ (local only, pre-pinning) |
 | `node:20.19-alpine3.21` | 3.21.5 | 11 | TBD by CI | bumped |
 | `node:20.19-alpine3.22` | 3.22.2 | 11 | **2 CRITICAL** (OpenSSL CVE-2025-15467) | bumped |
-| `node:20.19-alpine3.23` | 3.23.x | 0 | **0** | ✅ current |
+| `node:20.19-alpine3.23` | 3.23.2 | 11 | **2 CRITICAL** (same — packages frozen at image build time) | + apk upgrade |
+| `node:20.19-alpine3.23` + `apk upgrade` | 3.23.2 (patched) | 0 | **0** | ✅ current |
 
 Lesson: pinning a version guarantees reproducibility but also freezes OS packages at a specific state. The Trivy step in CI catches any CRITICAL/HIGH CVEs introduced by a pin and blocks the push — forcing an explicit version bump as the resolution.
 

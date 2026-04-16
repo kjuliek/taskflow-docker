@@ -28,6 +28,9 @@ FROM node:20.19-alpine3.23 AS production
 
 WORKDIR /app
 
+# Upgrade OS packages to pick up security patches released after the base image was built
+RUN apk upgrade --no-cache
+
 # Dedicated non-root user for security
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
