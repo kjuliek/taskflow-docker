@@ -132,9 +132,27 @@ Redis is capped at 128 MB. When full, it evicts the least-recently-used keys (`a
 
 ### Redis caching strategy
 
-- `GET /api/tasks` stores the result in Redis with a 60-second TTL under the key `tasks:all`.
-- Any write operation (`POST`, `PUT`, `DELETE`) immediately invalidates that key.
-- Subsequent reads hit the database and repopulate the cache.
+`GET /api/tasks` supports pagination via `?limit=20&offset=0` query parameters:
+
+| Parameter | Default | Max | Description |
+|-----------|---------|-----|-------------|
+| `limit` | `20` | `100` | Number of tasks per page |
+| `offset` | `0` | — | Number of tasks to skip |
+
+Each page is cached independently in Redis under the key `tasks:all:<limit>:<offset>` with a 60-second TTL. This means `?limit=20&offset=0` and `?limit=20&offset=20` are cached separately.
+
+Any write operation (`POST`, `PUT`, `DELETE`) invalidates **all** paginated cache entries at once by scanning and deleting every key matching `tasks:all:*`.
+
+Example response:
+
+```json
+{
+  "data": [{ "id": 1, "title": "...", "status": "pending", "..." : "..." }],
+  "total": 42,
+  "limit": 20,
+  "offset": 0
+}
+```
 
 ### Nginx reverse proxy
 
