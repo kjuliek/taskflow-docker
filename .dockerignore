@@ -1,0 +1,37 @@
+# Dependencies — reinstalled inside the builder stage
+node_modules
+
+# Version control
+.git
+.github
+
+# Environment files — injected at runtime, never baked into the image
+.env
+.env.*
+
+# Documentation — not needed at runtime
+*.md
+
+# Test suite — not shipped in the production image
+coverage
+tests
+
+# Linter / formatter config
+.eslintrc*
+.prettierrc*
+
+# Compose files — infrastructure config, not application code
+docker-compose*.yml
+
+# The Dockerfile itself
+Dockerfile
+
+# Editor / OS artefacts
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*

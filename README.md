@@ -95,6 +95,38 @@ See [.env.example](.env.example) for the full list.
 
 ---
 
+## Docker image
+
+### Build
+
+```bash
+docker build -t taskflow-api .
+```
+
+### Verify image size (target: < 100 MB)
+
+```bash
+docker images taskflow-api
+```
+
+The multi-stage build keeps the final image lean:
+
+| What stays out | Why |
+|----------------|-----|
+| devDependencies | pruned in the builder stage before copy |
+| Test files | excluded via `.dockerignore` |
+| Build toolchain | builder stage is discarded entirely |
+| Git history / docs | excluded via `.dockerignore` |
+
+### Image layers
+
+```
+Stage 1 — builder   node:20-alpine + all deps + npm prune  (discarded)
+Stage 2 — production  node:20-alpine + prod deps + src only  ← final image
+```
+
+---
+
 ## Development (without Docker)
 
 ```bash
@@ -147,7 +179,7 @@ taskflow-docker/
 ## Roadmap
 
 - [x] Step 1 — REST API with CRUD endpoints and `/health`
-- [ ] Step 2 — Multi-stage Dockerfile (target < 100 MB)
+- [x] Step 2 — Multi-stage Dockerfile (target < 100 MB)
 - [ ] Step 3 — Docker Compose with health checks
 - [ ] Step 4 — Trivy vulnerability scan
 - [ ] Step 5 — GitHub Actions: build → scan → push to GHCR
