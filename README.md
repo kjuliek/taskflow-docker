@@ -90,9 +90,9 @@ HTTP `200` when healthy, `503` when any dependency is down.
 | Service | Image | Role | Port |
 |---------|-------|------|------|
 | `api` | built from `Dockerfile` | Node.js REST API | 3000 (internal) |
-| `db` | `postgres:16.8-alpine3.22` | Persistent task storage | 5432 (internal) |
-| `redis` | `redis:7.4-alpine3.22` | Task list cache (TTL 60 s) | 6379 (internal) |
-| `nginx` | `nginx:1.27-alpine3.22` | Reverse proxy, single public entry point | **80 (public)** |
+| `db` | `postgres:16.8-alpine3.23` | Persistent task storage | 5432 (internal) |
+| `redis` | `redis:7.4-alpine3.23` | Task list cache (TTL 60 s) | 6379 (internal) |
+| `nginx` | `nginx:1.27-alpine3.23` | Reverse proxy, single public entry point | **80 (public)** |
 
 Only Nginx is exposed to the host. All other services communicate on Docker's internal network.
 
@@ -197,10 +197,10 @@ All base images are pinned to a specific runtime + Alpine version to guarantee r
 
 | Service | Image | Why pinned |
 |---------|-------|-----------|
-| API (builder + runtime) | `node:20.19-alpine3.22` | LTS runtime, fixed OS packages |
-| PostgreSQL | `postgres:16.8-alpine3.22` | Known-good patch release |
-| Redis | `redis:7.4-alpine3.22` | Known-good patch release |
-| Nginx | `nginx:1.27-alpine3.22` | Stable branch, fixed OS packages |
+| API (builder + runtime) | `node:20.19-alpine3.23` | LTS runtime, fixed OS packages |
+| PostgreSQL | `postgres:16.8-alpine3.23` | Known-good patch release |
+| Redis | `redis:7.4-alpine3.23` | Known-good patch release |
+| Nginx | `nginx:1.27-alpine3.23` | Stable branch, fixed OS packages |
 
 Using `:latest` or partial tags like `postgres:16-alpine` means the image silently changes on every pull. Pinning the full version makes every build deterministic across dev, CI, and production.
 
@@ -216,16 +216,13 @@ Scan run against `ghcr.io/kjuliek/taskflow-docker:latest` in CI with `--severity
 
 | Scope | Total CVEs | CRITICAL/HIGH | Pipeline impact |
 |-------|-----------|---------------|----------------|
-| Alpine OS packages (`alpine 3.22.2`) | 11 | **0** | ✅ passes |
+| Alpine OS packages (`alpine 3.23.x`) | 0 | **0** | ✅ passes |
 | Application `node_modules` (`/app/node_modules/`) | 0 | **0** | ✅ passes |
-| npm internal packages (`/usr/local/lib/node_modules/npm/`) | 2 HIGH | excluded via `skip-dirs` | ✅ passes |
+| npm internal packages (`/usr/local/lib/node_modules/npm/`) | — | excluded via `skip-dirs` | ✅ passes |
 
-The 11 Alpine OS CVEs are all **MEDIUM or LOW** severity — below the `CRITICAL,HIGH` filter threshold.
+Alpine 3.23 includes patched versions of `libcrypto3`/`libssl3` (≥ 3.5.5-r0), `musl` (≥ 1.2.5-r12), and `zlib` (≥ 1.3.2-r0) that resolve all CRITICAL and HIGH CVEs present in alpine 3.22.
 
-The 2 findings (`cross-spawn` CVE-2024-21538, `glob`) are in Node.js's **bundled npm tool** at `/usr/local/lib/node_modules/npm/`, not in our application code at `/app/node_modules/`. This directory is excluded from the Trivy scan via `skip-dirs: /usr/local/lib/node_modules/npm` because:
-- The npm CLI does not run in production — it is a build/install tool only
-- These packages are not reachable through the API at runtime
-- Patching them would require upgrading Node.js itself, not our application
+The npm internal packages at `/usr/local/lib/node_modules/npm/` are excluded via `skip-dirs` because they belong to Node.js's bundled npm CLI — not our application code — and are not reachable at runtime.
 
 #### Version history
 
@@ -233,7 +230,8 @@ The 2 findings (`cross-spawn` CVE-2024-21538, `glob`) are in Node.js's **bundled
 |-----|------------------------|---------|---------------|--------|
 | `node:20-alpine` (unpinned) | 3.23.x | 0 | 0 | ✅ (local only, pre-pinning) |
 | `node:20.19-alpine3.21` | 3.21.5 | 11 | TBD by CI | bumped |
-| `node:20.19-alpine3.22` | 3.22.2 | 11 | **0** | ✅ current |
+| `node:20.19-alpine3.22` | 3.22.2 | 11 | **2 CRITICAL** (OpenSSL CVE-2025-15467) | bumped |
+| `node:20.19-alpine3.23` | 3.23.x | 0 | **0** | ✅ current |
 
 Lesson: pinning a version guarantees reproducibility but also freezes OS packages at a specific state. The Trivy step in CI catches any CRITICAL/HIGH CVEs introduced by a pin and blocks the push — forcing an explicit version bump as the resolution.
 
