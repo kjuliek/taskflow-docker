@@ -35,7 +35,7 @@ curl http://localhost/health
 
 Expected response:
 ```json
-{"status":"healthy","timestamp":"...","database":"connected","cache":"connected"}
+{"status":"healthy","timestamp":"...","version":"unknown","database":"connected","cache":"connected"}
 ```
 
 > Any developer can clone the repo, run `docker compose up`, and have the full stack running in under 30 seconds — no local Node.js, PostgreSQL, or Redis installation required.
@@ -74,12 +74,15 @@ Expected response:
 {
   "status": "healthy",
   "timestamp": "2026-04-16T12:00:00.000Z",
+  "version": "1.0.0-blue",
   "database": "connected",
   "cache": "connected"
 }
 ```
 
 HTTP `200` when healthy, `503` when any dependency is down.
+
+`version` reflects the `APP_VERSION` environment variable — set per-container in `docker-compose.prod.yml` to identify which Blue/Green slot is serving the request. Defaults to `"unknown"` when the variable is not set (e.g. in the base `docker-compose.yml`).
 
 ---
 
