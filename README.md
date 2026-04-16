@@ -212,15 +212,27 @@ Using `:latest` or partial tags like `postgres:16-alpine` means the image silent
 
 ### Trivy vulnerability scan results
 
-Scan run against `taskflow-api:latest` with `--severity CRITICAL,HIGH`:
+Scan run against `ghcr.io/kjuliek/taskflow-docker:latest` in CI with `--severity CRITICAL,HIGH`:
 
-| Scope | CVEs found |
-|-------|-----------|
-| Alpine OS packages | **0** |
-| Application `node_modules` | **0** |
-| npm internal packages (system) | 2 (not in app scope) |
+| Scope | Total CVEs | CRITICAL/HIGH | Pipeline impact |
+|-------|-----------|---------------|----------------|
+| Alpine OS packages (`alpine 3.22.2`) | 11 | **0** | ✅ passes |
+| Application `node_modules` | 0 | **0** | ✅ passes |
+| npm internal packages (`usr/local/lib/...`) | 2 | 0 in app scope | ✅ passes |
 
-The 2 findings in `usr/local/lib/node_modules/npm/` belong to Node.js's bundled npm tool, not our application code. They are not exploitable through the API.
+The 11 Alpine OS CVEs are all **MEDIUM or LOW** severity — below the `CRITICAL,HIGH` filter threshold. The pipeline's `exit-code: 1` is only triggered by CRITICAL or HIGH findings, so the build passes.
+
+The 2 findings in `usr/local/lib/node_modules/npm/` (`cross-spawn`, `glob`) belong to Node.js's bundled npm tool, not our application code. They are not reachable through the API.
+
+#### Version history
+
+| Pin | Alpine version in image | OS CVEs | CRITICAL/HIGH | Status |
+|-----|------------------------|---------|---------------|--------|
+| `node:20-alpine` (unpinned) | 3.23.x | 0 | 0 | ✅ (local only, pre-pinning) |
+| `node:20.19-alpine3.21` | 3.21.5 | 11 | TBD by CI | bumped |
+| `node:20.19-alpine3.22` | 3.22.2 | 11 | **0** | ✅ current |
+
+Lesson: pinning a version guarantees reproducibility but also freezes OS packages at a specific state. The Trivy step in CI catches any CRITICAL/HIGH CVEs introduced by a pin and blocks the push — forcing an explicit version bump as the resolution.
 
 ### Run Trivy locally (Windows PowerShell)
 
@@ -229,8 +241,8 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/aquasecurit
 ```
 
 If CVEs are found:
-1. Update the base image pin (e.g. `alpine3.22` → `alpine3.22`)
-2. Run `npm audit fix` to patch vulnerable dependencies
+1. Update the base image Alpine pin (e.g. `alpine3.22` → `alpine3.23`)
+2. Run `npm audit fix` to patch vulnerable Node.js dependencies
 3. Rebuild and scan again — never push with unresolved CRITICAL CVEs
 
 ---
