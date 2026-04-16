@@ -20,7 +20,7 @@ services:
           memory: 256M
     restart: always
 
-  postgres:
+  db:
     deploy:
       resources:
         limits:

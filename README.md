@@ -170,6 +170,55 @@ Copy `.env.example` to `.env` before starting the stack. Docker Compose builds t
 
 ---
 
+## Security
+
+### Non-root container
+
+The API runs as a dedicated non-root user (`appuser`) inside the container.  
+Verify at any time with:
+
+```bash
+docker compose exec api whoami
+# Expected output: appuser
+```
+
+### Pinned image versions
+
+All base images are pinned to a specific version to guarantee reproducible builds and prevent silent upgrades that could introduce CVEs.
+
+| Service | Image |
+|---------|-------|
+| API (builder + runtime) | `node:20.19-alpine3.21` |
+| PostgreSQL | `postgres:16.8-alpine3.21` |
+| Redis | `redis:7.4-alpine3.21` |
+| Nginx | `nginx:1.27-alpine3.21` |
+
+Using `:latest` or unversioned Alpine tags (e.g. `postgres:16-alpine`) means the image can change on every pull without your knowledge. Pinning the full version ensures the build is deterministic across all environments.
+
+### No secrets in the image
+
+- `.env` is listed in both `.gitignore` and `.dockerignore` — it is never committed or baked into the image.
+- Credentials are injected at runtime via environment variables.
+
+### Trivy vulnerability scan
+
+Scan the image locally before pushing:
+
+```bash
+# Scan for CRITICAL and HIGH CVEs only
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+  aquasec/trivy image --severity CRITICAL,HIGH taskflow-api:latest
+```
+
+Target: **0 CRITICAL CVEs**. If any are found:
+1. Update the base image pin to the latest patch (e.g. `node:20.19-alpine3.21` → `node:20.19-alpine3.22`)
+2. Run `npm audit fix` to update vulnerable dependencies
+3. Rebuild and scan again
+
+The CI pipeline (GitHub Actions) also runs Trivy automatically on every push and blocks the image push if CRITICAL CVEs are found.
+
+---
+
 ## Docker image
 
 ### Build
@@ -267,6 +316,6 @@ taskflow-docker/
 - [x] Step 1 — REST API with CRUD endpoints and `/health`
 - [x] Step 2 — Multi-stage Dockerfile (target < 100 MB)
 - [x] Step 3 — Docker Compose with health checks
-- [ ] Step 4 — Trivy vulnerability scan
+- [x] Step 4 — Trivy vulnerability scan
 - [ ] Step 5 — GitHub Actions: build → scan → push to GHCR
 - [ ] Step 6 — Blue/Green deployment simulation
