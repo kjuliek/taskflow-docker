@@ -3,7 +3,7 @@
 # Install all dependencies (including devDependencies), then prune to
 # production-only. devDeps never reach the final image.
 # =============================================================================
-FROM node:20.19-alpine3.21 AS builder
+FROM node:20.19-alpine3.22 AS builder
 
 WORKDIR /app
 
@@ -24,7 +24,7 @@ RUN npm prune --production
 # Lean runtime image: only production node_modules + source code.
 # The builder stage is discarded; its layers do not exist in the final image.
 # =============================================================================
-FROM node:20.19-alpine3.21 AS production
+FROM node:20.19-alpine3.22 AS production
 
 WORKDIR /app
 

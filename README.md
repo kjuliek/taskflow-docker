@@ -90,9 +90,9 @@ HTTP `200` when healthy, `503` when any dependency is down.
 | Service | Image | Role | Port |
 |---------|-------|------|------|
 | `api` | built from `Dockerfile` | Node.js REST API | 3000 (internal) |
-| `db` | `postgres:16.8-alpine3.21` | Persistent task storage | 5432 (internal) |
-| `redis` | `redis:7.4-alpine3.21` | Task list cache (TTL 60 s) | 6379 (internal) |
-| `nginx` | `nginx:1.27-alpine3.21` | Reverse proxy, single public entry point | **80 (public)** |
+| `db` | `postgres:16.8-alpine3.22` | Persistent task storage | 5432 (internal) |
+| `redis` | `redis:7.4-alpine3.22` | Task list cache (TTL 60 s) | 6379 (internal) |
+| `nginx` | `nginx:1.27-alpine3.22` | Reverse proxy, single public entry point | **80 (public)** |
 
 Only Nginx is exposed to the host. All other services communicate on Docker's internal network.
 
@@ -197,10 +197,10 @@ All base images are pinned to a specific runtime + Alpine version to guarantee r
 
 | Service | Image | Why pinned |
 |---------|-------|-----------|
-| API (builder + runtime) | `node:20.19-alpine3.21` | LTS runtime, fixed OS packages |
-| PostgreSQL | `postgres:16.8-alpine3.21` | Known-good patch release |
-| Redis | `redis:7.4-alpine3.21` | Known-good patch release |
-| Nginx | `nginx:1.27-alpine3.21` | Stable branch, fixed OS packages |
+| API (builder + runtime) | `node:20.19-alpine3.22` | LTS runtime, fixed OS packages |
+| PostgreSQL | `postgres:16.8-alpine3.22` | Known-good patch release |
+| Redis | `redis:7.4-alpine3.22` | Known-good patch release |
+| Nginx | `nginx:1.27-alpine3.22` | Stable branch, fixed OS packages |
 
 Using `:latest` or partial tags like `postgres:16-alpine` means the image silently changes on every pull. Pinning the full version makes every build deterministic across dev, CI, and production.
 
@@ -229,7 +229,7 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/aquasecurit
 ```
 
 If CVEs are found:
-1. Update the base image pin (e.g. `alpine3.21` → `alpine3.22`)
+1. Update the base image pin (e.g. `alpine3.22` → `alpine3.22`)
 2. Run `npm audit fix` to patch vulnerable dependencies
 3. Rebuild and scan again — never push with unresolved CRITICAL CVEs
 
@@ -346,8 +346,8 @@ Result: **~49 MB content size** (well under the 100 MB target).
 ### Image stages
 
 ```
-Stage 1 — builder     node:20.19-alpine3.21 + all deps + npm prune  ← discarded
-Stage 2 — production  node:20.19-alpine3.21 + prod deps + src only  ← pushed to GHCR
+Stage 1 — builder     node:20.19-alpine3.22 + all deps + npm prune  ← discarded
+Stage 2 — production  node:20.19-alpine3.22 + prod deps + src only  ← pushed to GHCR
 ```
 
 ---
