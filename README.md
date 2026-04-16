@@ -414,16 +414,80 @@ taskflow-docker/
 ├── tests/
 │   └── tasks.test.js       # Unit tests (node:test, no extra deps)
 ├── nginx/
-│   └── default.conf        # Nginx reverse proxy — upstream api_backend
+│   ├── default.conf        # Nginx reverse proxy — upstream api_backend
+│   └── blue-green.conf     # Blue/Green routing — active + standby upstreams
 ├── Dockerfile              # Multi-stage: builder (prune) + production (non-root)
 ├── .dockerignore           # Excludes node_modules, tests, docs, .env, CI config
 ├── .eslintrc.json          # ESLint 8 config — eslint:recommended + node env
 ├── docker-compose.yml      # 4-service stack with pinned images and healthchecks
-├── docker-compose.prod.yml # Production overrides (resource limits, restart: always)
+├── docker-compose.prod.yml # Blue/Green stack (api-blue + api-green + nginx + db + redis)
 ├── .env.example            # 3 variables to set — Compose builds the URLs
 ├── package.json
 └── README.md
 ```
+
+---
+
+## Blue/Green Deployment Simulation
+
+In production, Blue/Green uses a load balancer (AWS ALB, Traefik…). Here it is simulated with Docker Compose and Nginx to demonstrate the principle.
+
+### Architecture
+
+```
+Client → Nginx (:80) → active_backend  → api-blue:3000  (live traffic)
+                      → standby_backend → api-green:3000 (validation only, via /test-standby/)
+```
+
+Both containers share the same PostgreSQL database and Redis instance — no data migration required during the switch.
+
+### Files
+
+| File | Role |
+|------|------|
+| `docker-compose.prod.yml` | Defines `api-blue`, `api-green`, shared `db`, `redis`, `nginx` |
+| `nginx/blue-green.conf` | Routes public traffic to `active_backend`, exposes standby via `/test-standby/` |
+
+### Starting the stack
+
+```bash
+cp .env.example .env   # fill in credentials if not done
+docker compose -f docker-compose.prod.yml up -d
+```
+
+### Switch procedure (Blue → Green)
+
+```bash
+# 1. Verify Green is healthy before touching live traffic
+curl http://localhost/test-standby/health
+# Expected: {"status":"healthy","version":"2.0.0-green",...}
+
+# 2. Edit nginx/blue-green.conf — change active_backend to point to Green:
+#    server api-green:3000;   ← was api-blue:3000
+
+# 3. Reload Nginx — zero downtime, no restart needed
+docker compose -f docker-compose.prod.yml exec nginx nginx -s reload
+
+# 4. Confirm live traffic now hits Green
+curl http://localhost/health
+# Expected: {"status":"healthy","version":"2.0.0-green",...}
+
+# 5. Rollback to Blue if needed: reverse step 2 and reload again
+```
+
+### Why zero downtime
+
+`nginx -s reload` sends a `HUP` signal to the Nginx master process. It spawns new worker processes with the updated config while the old workers finish serving in-flight requests before exiting. No connection is dropped.
+
+### APP_VERSION
+
+The `/health` endpoint exposes `APP_VERSION` from the environment:
+
+```json
+{"status":"healthy","version":"2.0.0-green","database":"connected","cache":"connected"}
+```
+
+This makes it possible to confirm which slot is active at any time without inspecting container names.
 
 ---
 
@@ -434,4 +498,4 @@ taskflow-docker/
 - [x] Step 3 — Docker Compose with health checks
 - [x] Step 4 — Trivy vulnerability scan (0 CRITICAL CVEs)
 - [x] Step 5 — GitHub Actions: lint → test → build → scan → push to GHCR
-- [ ] Step 6 — Blue/Green deployment simulation
+- [x] Step 6 — Blue/Green deployment simulation

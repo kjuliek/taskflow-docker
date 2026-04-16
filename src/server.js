@@ -19,6 +19,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'healthy',
     timestamp: new Date().toISOString(),
+    version: process.env.APP_VERSION || 'unknown',
   };
 
   try {
