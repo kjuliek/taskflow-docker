@@ -82,16 +82,14 @@ HTTP `200` when healthy, `503` when any dependency is down.
 
 See [.env.example](.env.example) for the full list.
 
-| Variable | Default | Description |
+| Variable | Example | Description |
 |----------|---------|-------------|
-| `PORT` | `3000` | API listening port |
-| `NODE_ENV` | `development` | Runtime environment |
-| `POSTGRES_HOST` | `localhost` | PostgreSQL host |
-| `POSTGRES_DB` | `taskflow` | Database name |
-| `POSTGRES_USER` | `taskflow` | Database user |
-| `POSTGRES_PASSWORD` | — | Database password |
-| `REDIS_HOST` | `localhost` | Redis host |
-| `REDIS_PORT` | `6379` | Redis port |
+| `POSTGRES_USER` | `taskuser` | PostgreSQL username |
+| `POSTGRES_PASSWORD` | `taskpassword` | PostgreSQL password |
+| `POSTGRES_DB` | `taskdb` | PostgreSQL database name |
+| `DATABASE_URL` | *(built by Compose)* | Full connection string — auto-set by Docker Compose |
+| `REDIS_URL` | *(built by Compose)* | Redis connection string — auto-set by Docker Compose |
+| `NODE_ENV` | `production` | Runtime environment |
 
 ---
 
@@ -180,7 +178,7 @@ taskflow-docker/
 
 - [x] Step 1 — REST API with CRUD endpoints and `/health`
 - [x] Step 2 — Multi-stage Dockerfile (target < 100 MB)
-- [ ] Step 3 — Docker Compose with health checks
+- [x] Step 3 — Docker Compose with health checks
 - [ ] Step 4 — Trivy vulnerability scan
 - [ ] Step 5 — GitHub Actions: build → scan → push to GHCR
 - [ ] Step 6 — Blue/Green deployment simulation
