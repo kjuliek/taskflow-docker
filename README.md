@@ -229,9 +229,10 @@ npm test
 
 Unit tests run with Node's built-in `node:test` runner — no extra dependencies.
 
-> **Note (Node.js v22):** the test script uses a glob pattern (`"tests/**/*.test.js"`) instead of a directory path.  
-> On Node.js v22, `node --test tests/` attempts to resolve the directory as a CommonJS module entry point and fails.  
-> Passing an explicit glob lets the test runner discover files correctly on all platforms.
+> **Note:** the test script points directly to `tests/tasks.test.js` rather than using a directory or glob.  
+> On Node.js v22 (Windows), `node --test tests/` fails because the directory is resolved as a module entry point.  
+> On Node.js v20 (Linux/CI), quoted globs are not shell-expanded and are passed literally to the runner.  
+> An explicit file path is the only form that works reliably across Node.js versions and platforms.
 
 ---
 
