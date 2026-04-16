@@ -94,7 +94,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Scan the pushed image — pipeline fails if any CRITICAL CVE is found
+      # Scan the pushed image — pipeline fails if any CRITICAL CVE is found.
+      # skip-dirs excludes Node.js's bundled npm tool (/usr/local/lib/node_modules/npm/)
+      # which contains cross-spawn and glob CVEs we cannot patch (not our app code).
       - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@master
         with:
@@ -102,3 +104,4 @@ jobs:
           format: "table"
           severity: "CRITICAL,HIGH"
           exit-code: "1"
+          skip-dirs: "/usr/local/lib/node_modules/npm"

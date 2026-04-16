@@ -217,12 +217,15 @@ Scan run against `ghcr.io/kjuliek/taskflow-docker:latest` in CI with `--severity
 | Scope | Total CVEs | CRITICAL/HIGH | Pipeline impact |
 |-------|-----------|---------------|----------------|
 | Alpine OS packages (`alpine 3.22.2`) | 11 | **0** | ✅ passes |
-| Application `node_modules` | 0 | **0** | ✅ passes |
-| npm internal packages (`usr/local/lib/...`) | 2 | 0 in app scope | ✅ passes |
+| Application `node_modules` (`/app/node_modules/`) | 0 | **0** | ✅ passes |
+| npm internal packages (`/usr/local/lib/node_modules/npm/`) | 2 HIGH | excluded via `skip-dirs` | ✅ passes |
 
-The 11 Alpine OS CVEs are all **MEDIUM or LOW** severity — below the `CRITICAL,HIGH` filter threshold. The pipeline's `exit-code: 1` is only triggered by CRITICAL or HIGH findings, so the build passes.
+The 11 Alpine OS CVEs are all **MEDIUM or LOW** severity — below the `CRITICAL,HIGH` filter threshold.
 
-The 2 findings in `usr/local/lib/node_modules/npm/` (`cross-spawn`, `glob`) belong to Node.js's bundled npm tool, not our application code. They are not reachable through the API.
+The 2 findings (`cross-spawn` CVE-2024-21538, `glob`) are in Node.js's **bundled npm tool** at `/usr/local/lib/node_modules/npm/`, not in our application code at `/app/node_modules/`. This directory is excluded from the Trivy scan via `skip-dirs: /usr/local/lib/node_modules/npm` because:
+- The npm CLI does not run in production — it is a build/install tool only
+- These packages are not reachable through the API at runtime
+- Patching them would require upgrading Node.js itself, not our application
 
 #### Version history
 
