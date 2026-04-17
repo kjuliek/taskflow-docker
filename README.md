@@ -68,6 +68,17 @@ Expected response:
 
 `status` accepted values: `pending` · `in_progress` · `done`
 
+### Input validation
+
+All routes validate inputs before touching the database:
+
+| Rule | HTTP response |
+|------|--------------|
+| `:id` is not a positive integer | `400 "id" must be a positive integer` |
+| `status` is not one of the accepted values | `400 "status" must be one of: pending, in_progress, done` |
+| `title` missing on `POST` | `400 "title" is required` |
+| Task not found | `404 Task not found` |
+
 ### Health response
 
 ```json
@@ -381,8 +392,8 @@ Result: **~49 MB content size** (well under the 100 MB target).
 ### Image stages
 
 ```
-Stage 1 — builder     node:20.19-alpine3.22 + all deps + npm prune  ← discarded
-Stage 2 — production  node:20.19-alpine3.22 + prod deps + src only  ← pushed to GHCR
+Stage 1 — builder     node:20.19-alpine3.23 + all deps + npm prune  ← discarded
+Stage 2 — production  node:20.19-alpine3.23 + prod deps + src only  ← pushed to GHCR
 ```
 
 ---
@@ -414,6 +425,15 @@ npm run test:coverage    # unit tests + coverage report (stdout)
 ```
 
 Unit tests use Node.js's built-in `node:test` runner — no extra test framework dependency.
+
+### What is tested
+
+| Suite | Cases |
+|-------|-------|
+| `parseId` | valid integer, non-numeric string, zero, negative, empty string |
+| `status validation` | all valid values, unknown value, empty string, case-sensitivity |
+| `POST payload validation` | title only, all fields, missing title, invalid status |
+| `health response shape` | all keys present including `version`, fallback to `"unknown"`, unhealthy state |
 
 > **Cross-platform note:** the test script uses an explicit file path (`tests/tasks.test.js`) rather than a directory or glob.  
 > On Node.js v22 (Windows), `node --test tests/` fails because the directory resolves as a module entry point.  
@@ -468,6 +488,18 @@ Both containers share the same PostgreSQL database and Redis instance — no dat
 |------|------|
 | `docker-compose.prod.yml` | Defines `api-blue`, `api-green`, shared `db`, `redis`, `nginx` |
 | `nginx/blue-green.conf` | Routes public traffic to `active_backend`, exposes standby via `/test-standby/` |
+
+### Startup dependency chain
+
+```
+db (healthy) ──┐
+               ├──► api-blue  (healthy) ──┐
+redis (started)┘                          ├──► nginx
+               ├──► api-green (healthy) ──┘
+               └──(shared)
+```
+
+Both `api-blue` and `api-green` have a `healthcheck` (`wget /health`, every 15 s). Nginx only starts once **both** slots pass their healthcheck — preventing Nginx from proxying to a container that isn't ready yet.
 
 ### Starting the stack
 
